@@ -235,15 +235,44 @@ namespace Duplicati.Library.Main.Operation
             var missingHash = new List<Tuple<long, RemoteVolumeEntry>>();
             var cleanupRemovedRemoteVolumes = new HashSet<string>();
 
-            foreach(var e in database.DuplicateRemoteVolumes())
+            var duplicate_filter_map = new Dictionary<string, List<RemoteVolumeEntry>>();
+            foreach(var e in database.GetRemoteVolumes())
             {
-                if (e.State == RemoteVolumeState.Uploading || e.State == RemoteVolumeState.Temporary)
-                    database.UnlinkRemoteVolume(e.Name, e.State);
-                else
-                    throw new Exception(string.Format("The remote volume {0} appears in the database with state {1} and a deleted state, cannot continue", e.Name, e.State.ToString()));
+                List<RemoteVolumeEntry> lst;
+                duplicate_filter_map.TryGetValue(e.Name, out lst);
+                if (lst == null)
+                    duplicate_filter_map[e.Name] = lst = new List<RemoteVolumeEntry>();
+                lst.Add(e);
+            }
+
+            foreach(var n in duplicate_filter_map.Values.Where(x => x.Count > 1))
+            {
+                var isFixed = false;                
+                if (n.Where(x => x.State == RemoteVolumeState.Verified || x.State == RemoteVolumeState.Uploaded).Count() == 1)
+                {
+                    var strays = n.Where(x => x.State == RemoteVolumeState.Uploading || x.State == RemoteVolumeState.Temporary);
+                    if (strays.Count() == n.Count - 1)
+                    {
+                        foreach(var e in strays)
+                            database.UnlinkRemoteVolume(e.Name, e.State);
+
+                        isFixed = true;
+                    }
+                }
+
+                if (!isFixed)
+                    throw new Exception(
+                        string.Format(
+                            "Unable to guess what to do with remote volume {0}.{1}Registered states:{1}{2}",
+                            n.First().Name,
+                            Environment.NewLine,
+                            string.Join(Environment.NewLine, n.Select(x => string.Format("{0} - {1}", x.Name, x.State)))
+                        )
+                    );
             }
 
             var locallist = database.GetRemoteVolumes();
+
             foreach(var i in locallist)
             {
                 Volumes.IParsedVolume r;
